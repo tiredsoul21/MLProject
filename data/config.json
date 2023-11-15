@@ -1,0 +1,4 @@
+{
+    "dataPath": "/home/derrick/data/speedplusv2/synthetic/images",
+    "labels": "/home/derrick/data/speedplusv2/synthetic/labeledData/speed.vcc.json"
+}
