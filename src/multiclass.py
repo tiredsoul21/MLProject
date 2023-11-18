@@ -5,8 +5,11 @@ import argparse
 import numpy as np
 import cv2
 from random import shuffle, seed
-from keras.optimizers import Adam
 from tensorflow.keras import models, layers
+from sklearn.metrics import confusion_matrix, classification_report
+from keras.preprocessing.image import ImageDataGenerator
+from keras.callbacks import EarlyStopping
+from keras.optimizers import Adam
 
 # Read in the CLI arguments
 def parseArgs():
@@ -67,24 +70,23 @@ def main():
 
     # Define the number of rows and columns for section division
     labelsList = ['none', 'Side1', 'Side2', 'Side3', 'Side4', 'Side5', 'Side6']
-    maxNegatives = 60000
+    maxNegatives = 12000
     numClasses = len(labelsList)
     imageHeight = 1200 
     imageWidth = 1920
-    numRows = 25
-    numCols = 40
+    numRows = 5  # 5 10 15
+    numCols = 8  # 8 16 24
     seedValue = 42
-
 
     subHeight = imageHeight // numRows
     subWidth = imageWidth // numCols
     # Define the threshold for the number of mask pixels
-    threshold = subHeight*subWidth*0.25
-
+    threshold = subHeight*subWidth*0.15
 
     # Initialize the complete label list
     labelSections = []
 
+    # Randomize the order of the images
     seed(seedValue)
     keyList = list(labels.keys())
     shuffle(keyList)
@@ -126,11 +128,6 @@ def main():
         masks = np.array(masks)
         masks = np.moveaxis(masks, 0, -1)
 
-        # # Display the masks
-        # cv2.imshow("Masks", masks)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
         # Loop through the sub-sections
         for row in range(numRows):
             for col in range(numCols):
@@ -145,24 +142,15 @@ def main():
 
                 # Add label for sub-section with channel > threshold
                 for i in range(3):
-                    # print(classIDs[i])
-                    # print(channelCounts[i])
                     if channelCounts[i] > threshold:
                         sectionLabels.append(classIDs[i])
                 if len(sectionLabels) == 0:
                     sectionLabels.append("none")
 
-                #display sub image
-                # cv2.imshow("Masks", masks[startRow:endRow, startCol:endCol, :])
-                # cv2.waitKey(0)
-                # cv2.destroyAllWindows()
-
                 # Add the section labels to the complete label list
                 labelSections.append(sectionLabels)
                 
     print(f"Label creation complete {len(labelSections)} labels created.")
-    # print("Image Labels:")
-    # print(labelSections)
 
     #Convert labels to one-hot encoding
     oneHotLabels = []
@@ -171,9 +159,6 @@ def main():
         for i in range(len(label)):
             oneHot[labelsList.index(label[i])] = 1
         oneHotLabels.append(oneHot)
-
-    # print("One Hot Labels:")
-    # print(oneHotLabels)
 
     imageSections = []
     # Loop through the images and create labels for sub-sections
@@ -211,16 +196,21 @@ def main():
 
     # Define the model
     model = models.Sequential()
-    # model.add(layers.Conv2D(4, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
-    # model.add(layers.MaxPooling2D((2, 2)))
+    model.add(layers.Conv2D(4, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
+    model.add(layers.MaxPooling2D((2, 2)))
     model.add(layers.Conv2D(16, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
     model.add(layers.MaxPooling2D((2, 2)))
     model.add(layers.Conv2D(32, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
     model.add(layers.MaxPooling2D((2, 2)))
     model.add(layers.Conv2D(64, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
     model.add(layers.MaxPooling2D((2, 2)))
+    model.add(layers.Conv2D(128, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
+    model.add(layers.MaxPooling2D((2, 2)))
     model.add(layers.Flatten())
     model.add(layers.Dense(256, activation='relu'))
+    model.add(layers.Dropout(0.5))
+    model.add(layers.Dense(128, activation='relu'))
+    model.add(layers.Dropout(0.5))
     model.add(layers.Dense(numClasses, activation='softmax'))
     model.compile(optimizer=Adam(learning_rate=0.00001), loss='categorical_crossentropy', metrics=['accuracy'])
 
@@ -265,16 +255,36 @@ def main():
     print(sumPerSide)
 
     # Train the model
-    model.fit(trainImages, trainLabels, validation_data=(valImages, valLabels), epochs=3, batch_size=16)
+    trainImages = np.expand_dims(trainImages, axis=-1)
+    datagen = ImageDataGenerator(
+        rotation_range=40,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        shear_range=0.2,
+        zoom_range=0.2,
+        horizontal_flip=False,
+        fill_mode='nearest'
+    )
+    datagen.fit(trainImages)
+    earlyStopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+    model.fit(trainImages, trainLabels, validation_data=(valImages, valLabels), epochs=50, batch_size=16, callbacks=[earlyStopping])
 
     # Evaluate the model
     testLoss, testAccuracy = model.evaluate(testImages, testLabels)
-
     print(f"Test loss: {testLoss}")
     print(f"Test accuracy: {testAccuracy}")
 
-    # Save the trained model for future use
     model.save('side_detection_model.h5')
+    # Evaluate the model
+    predictions = model.predict(testImages)
+    predictedLabels = [round(prediction.argmax()) for prediction in predictions]
+    trueLabels = [label.argmax() for label in testLabels]
+    conf_matrix = confusion_matrix(trueLabels, predictedLabels)
+    class_report = classification_report(trueLabels, predictedLabels)
+    print("Confusion Matrix:")
+    print(conf_matrix)
+    print("Classification Report:")
+    print(class_report)
 
 if __name__ == "__main__":
     main()

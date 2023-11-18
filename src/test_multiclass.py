@@ -2,6 +2,10 @@ import cv2
 import numpy as np
 from tensorflow import keras
 
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
+
 # Load the pre-trained model
 model = keras.models.load_model('side_detection_model.h5')
 
@@ -23,7 +27,7 @@ numCols = int(imageWidth/model.input_shape[2])
 threshold = .95
 
 # The colormap for each class
-class_colors = {
+classColors = {
     'none': (0, 0, 0),       # Black for 'none'
     'Side1': (0, 0, 255),    # Red
     'Side2': (0, 255, 0),    # Green
@@ -72,7 +76,6 @@ for imageName in imageList:
 
     predictions = model.predict(imageSections)
     print("predictions Shape:", predictions.shape)
-
     # Loop through the sub-sections
     index = 0
     for row in range(numRows):
@@ -89,19 +92,42 @@ for imageName in imageList:
             # Reshape the input for the model
             sectionImage = np.expand_dims(sectionImage, axis=0)
 
-            # Choose the classes based on the threshold
-            detectedClasses = [labelsList[i] for i in range(numClasses) if predictions[index, i] > threshold]
-            # Emphasize the detected regions in the result image
-            for detected_class in detectedClasses:
-                color = class_colors[detected_class]
-                resultImage[startRow:endRow, startCol:endCol, :] = np.clip(
-                    resultImage[startRow:endRow, startCol:endCol, :] + color, 0, 255
-                )
+            # Choose the class with the maximum probability
+            maxClassIndex = np.argmax(predictions[index, :])
+            detectedClass = labelsList[maxClassIndex]
+            # Emphasize the detected region in the result image
+            color = classColors[detectedClass]
+            resultImage[startRow:endRow, startCol:endCol, :] = np.clip(
+                resultImage[startRow:endRow, startCol:endCol, :] + color, 0, 255
+            )
             index += 1
+    
+    # Assuming predictions is your array of shape (160, 7)
+
+    # Plot the distributions on the same plot
+    plt.figure(figsize=(12, 6))  # Adjust the figure size as needed
+
+    # Plot the overall population distribution for each class
+    plt.subplot(1, 2, 1)
+    for i in range(predictions.shape[1]):
+        classClrs = {label: tuple(val / 255.0 for val in rgb) for label, rgb in classColors.items()}
+        hist, bins = np.histogram(predictions[:, i], bins=np.linspace(0, 1, 21))
+        hist_percentage = hist / len(predictions) * 100
+        plt.plot(bins[:-1], hist_percentage, color=classClrs[labelsList[i]], label=labelsList[i])
+
+    plt.xlabel('Predicted Probability')
+    plt.ylabel('Percentage of Samples')
+    plt.legend()
 
     # Display the result image with objects marked
     # Resize image by 50%
     resultImage = cv2.resize(resultImage, (0, 0), fx=0.5, fy=0.5)
-    cv2.imshow('Objects Detected', resultImage)
-    cv2.waitKey(0)
+    plt.subplot(1, 2, 2)
+    plt.imshow(resultImage)
+    plt.title('Objects Detected')
+
+    # Show the plot
+    plt.show()
+
+    # Display the result image with objects marked
     cv2.destroyAllWindows()
