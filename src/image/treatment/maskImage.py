@@ -30,10 +30,10 @@ def maskImageDir(sourceDir, destinationDir, partition=1.0):
             blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
             # Use canny for edge detection
-            edges = cv2.Canny(blurred, threshold1=10, threshold2=40)
+            edges = cv2.Canny(blurred, threshold1=100, threshold2=300)
 
             # Apply morphological to help connect stuff
-            kernel = np.ones((100, 100), np.uint8)
+            kernel = np.ones((30, 30), np.uint8)
             closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
             # Find contours

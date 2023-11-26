@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import cv2
 from random import shuffle, seed
+from tensorflow import keras
 from tensorflow.keras import models, layers
 from sklearn.metrics import confusion_matrix, classification_report
 from keras.preprocessing.image import ImageDataGenerator
@@ -74,14 +75,12 @@ def main():
     numClasses = len(labelsList)
     imageHeight = 1200 
     imageWidth = 1920
-    numRows = 5  # 5 10 15
-    numCols = 8  # 8 16 24
     seedValue = 42
-
-    subHeight = imageHeight // numRows
-    subWidth = imageWidth // numCols
+    squareSize = 256
+    overlap = 0.30
+    shiftBox = int(squareSize * overlap)
     # Define the threshold for the number of mask pixels
-    threshold = subHeight*subWidth*0.15
+    threshold = squareSize*squareSize*0.25
 
     # Initialize the complete label list
     labelSections = []
@@ -129,35 +128,36 @@ def main():
         masks = np.moveaxis(masks, 0, -1)
 
         # Loop through the sub-sections
-        for row in range(numRows):
-            for col in range(numCols):
-                # Define the section boundaries
-                startRow = row * subHeight
-                endRow = (row + 1) * subHeight
-                startCol = col * subWidth
-                endCol = (col + 1) * subWidth
+        startRow = 0
+        startCol = 0
+        while startRow + squareSize <= imageHeight:
+            while startCol + squareSize <= imageWidth:
+                endRow = startRow + squareSize
+                endCol = startCol + squareSize
 
-                sectionLabels = []
+                sectionLabel = "none"
                 channelCounts = np.count_nonzero(masks[startRow:endRow, startCol:endCol, :], axis = (0,1))
 
-                # Add label for sub-section with channel > threshold
-                for i in range(3):
-                    if channelCounts[i] > threshold:
-                        sectionLabels.append(classIDs[i])
-                if len(sectionLabels) == 0:
-                    sectionLabels.append("none")
+                # Check if any channel count is above the threshold
+                if any(count > threshold for count in channelCounts):
+                    # Find the index of the channel with the maximum count
+                    max_channel = np.argmax(channelCounts)
+                    sectionLabel = classIDs[max_channel]
 
-                # Add the section labels to the complete label list
-                labelSections.append(sectionLabels)
+                # Add the section label to the complete label list
+                labelSections.append(sectionLabel)
+                startCol += shiftBox
+            startCol = 0
+            startRow += shiftBox
                 
     print(f"Label creation complete {len(labelSections)} labels created.")
 
-    #Convert labels to one-hot encoding
+    # Convert labels to one-hot encoding
     oneHotLabels = []
     for label in labelSections:
         oneHot = [0] * len(labelsList)
-        for i in range(len(label)):
-            oneHot[labelsList.index(label[i])] = 1
+        index = labelsList.index(label)
+        oneHot[index] = 1
         oneHotLabels.append(oneHot)
 
     imageSections = []
@@ -169,19 +169,21 @@ def main():
         image = cv2.imread(os.path.join(dataPath, imageFilename), cv2.IMREAD_GRAYSCALE)
 
         # Loop through the sub-sections
-        for row in range(numRows):
-            for col in range(numCols):
-                # Define the section boundaries
-                startRow = row * subHeight
-                endRow = (row + 1) * subHeight
-                startCol = col * subWidth
-                endCol = (col + 1) * subWidth
+        startRow = 0
+        startCol = 0
+        while startRow + squareSize <= imageHeight:
+            while startCol + squareSize <= imageWidth:
+                endRow = startRow + squareSize
+                endCol = startCol + squareSize
 
                 # Crop the section from the image
                 sectionImage = image[startRow:endRow, startCol:endCol]
 
                 # Add the section image to the complete image list
                 imageSections.append(sectionImage)
+                startCol += shiftBox
+            startCol = 0
+            startRow += shiftBox
                 
     print(f"Image treatment complete. {len(imageSections)} images created.")
 
@@ -196,23 +198,31 @@ def main():
 
     # Define the model
     model = models.Sequential()
-    model.add(layers.Conv2D(4, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
+    model.add(layers.Conv2D(64, (9,9), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    
     model.add(layers.MaxPooling2D((2, 2)))
-    model.add(layers.Conv2D(16, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
+    model.add(layers.Conv2D(64, (3,3), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    model.add(layers.Conv2D(64, (6,6), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    model.add(layers.Conv2D(64, (9,9), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    
     model.add(layers.MaxPooling2D((2, 2)))
-    model.add(layers.Conv2D(32, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
+    model.add(layers.Conv2D(64, (3,3), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    model.add(layers.Conv2D(64, (6,6), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    model.add(layers.Conv2D(64, (9,9), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+   
     model.add(layers.MaxPooling2D((2, 2)))
-    model.add(layers.Conv2D(64, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
+    model.add(layers.Conv2D(64, (9,9), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+    
     model.add(layers.MaxPooling2D((2, 2)))
-    model.add(layers.Conv2D(128, (3,3), activation='relu', input_shape=(subHeight, subWidth, 1),padding='same'))
-    model.add(layers.MaxPooling2D((2, 2)))
+    model.add(layers.Conv2D(64, (9,9), activation='relu', input_shape=(squareSize, squareSize, 1),padding='same'))
+
     model.add(layers.Flatten())
     model.add(layers.Dense(256, activation='relu'))
     model.add(layers.Dropout(0.5))
     model.add(layers.Dense(128, activation='relu'))
     model.add(layers.Dropout(0.5))
     model.add(layers.Dense(numClasses, activation='softmax'))
-    model.compile(optimizer=Adam(learning_rate=0.00001), loss='categorical_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=Adam(learning_rate=0.00002), loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
     # Split the dataset into training, validation, and test sets
     trainSize = int(0.6 * len(imageSections))
@@ -224,40 +234,35 @@ def main():
     valLabels = labels[trainSize:trainSize + valSize]
     testLabels = labels[trainSize + valSize:]
 
-    # Calculate the number of samples to move to the test set for the first class
-    sumPerSide = np.sum(trainLabels, axis=0)
-    secondMax = np.argsort(-sumPerSide)[1]
+    # Remove samples and labels from the training set
     numSamplesToMove = max(0, np.sum(trainLabels[:, 0]) - maxNegatives)
-
-    # Identify the indices of the samples to move
-    indices_to_move = np.where(trainLabels[:, 0] == 1)[0][:numSamplesToMove]
-
-    # Move the selected samples and labels to the test set
-    # testImages = np.concatenate([testImages, trainImages[indices_to_move]])
-    # testLabels = np.concatenate([testLabels, trainLabels[indices_to_move]])
-    # Remove the moved samples and labels from the training set
-    trainImages = np.delete(trainImages, indices_to_move, axis=0)
-    trainLabels = np.delete(trainLabels, indices_to_move, axis=0)
+    indicesRemoved = np.where(trainLabels[:, 0] == 1)[0][:numSamplesToMove]
+    trainImages = np.delete(trainImages, indicesRemoved, axis=0)
+    trainLabels = np.delete(trainLabels, indicesRemoved, axis=0)
+    numSamplesToMove = max(0, np.sum(valLabels[:, 0]) - maxNegatives)
+    indicesRemoved = np.where(valLabels[:, 0] == 1)[0][:numSamplesToMove]
+    valImages = np.delete(valImages, indicesRemoved, axis=0)
+    valLabels = np.delete(valLabels, indicesRemoved, axis=0)
+    numSamplesToMove = max(0, np.sum(testLabels[:, 0]) - int(maxNegatives/3))
+    indicesRemoved = np.where(testLabels[:, 0] == 1)[0][:numSamplesToMove]
+    testImages = np.delete(testImages, indicesRemoved, axis=0)
+    testLabels = np.delete(testLabels, indicesRemoved, axis=0)
 
     # Print the new sum of occurrences for each side in the training set
     sumPerSide = np.sum(trainLabels, axis=0)
     print("Sum of each side's occurrences in the training set:")
     print(sumPerSide)
-
-    # Print the new sum of occurrences for each side in the test set
     sumPerSide = np.sum(valLabels, axis=0)
     print("Sum of each side's occurrences in the validation set:")
     print(sumPerSide)
-
-    # Print the new sum of occurrences for each side in the test set
     sumPerSide = np.sum(testLabels, axis=0)
     print("Sum of each side's occurrences in the test set:")
     print(sumPerSide)
 
-    # Train the model
+    # Reshape the images
     trainImages = np.expand_dims(trainImages, axis=-1)
     datagen = ImageDataGenerator(
-        rotation_range=40,
+        rotation_range=15,
         width_shift_range=0.2,
         height_shift_range=0.2,
         shear_range=0.2,
@@ -266,25 +271,55 @@ def main():
         fill_mode='nearest'
     )
     datagen.fit(trainImages)
+
+    # Train the model
     earlyStopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-    model.fit(trainImages, trainLabels, validation_data=(valImages, valLabels), epochs=50, batch_size=16, callbacks=[earlyStopping])
+    model.fit(trainImages, trainLabels, validation_data=(valImages, valLabels), epochs=100, batch_size=16, callbacks=[earlyStopping])
+
+    print("Training complete, Saving.")
+    model.save('side_detection_model.h5')
+    # model = keras.models.load_model('side_detection_model.h5')
 
     # Evaluate the model
+    print ("Evaluating model")
     testLoss, testAccuracy = model.evaluate(testImages, testLabels)
     print(f"Test loss: {testLoss}")
     print(f"Test accuracy: {testAccuracy}")
 
-    model.save('side_detection_model.h5')
     # Evaluate the model
-    predictions = model.predict(testImages)
-    predictedLabels = [round(prediction.argmax()) for prediction in predictions]
-    trueLabels = [label.argmax() for label in testLabels]
-    conf_matrix = confusion_matrix(trueLabels, predictedLabels)
-    class_report = classification_report(trueLabels, predictedLabels)
+    batchSize = 32
+    predictions_list = []
+    trueLabelsList = []
+
+    # Iterate over the test set in batches
+    for i in range(0, len(testImages), batchSize):
+        batchImages = testImages[i:i + batchSize]
+        batchLabels = testLabels[i:i + batchSize]
+
+        # Perform batch-wise prediction
+        batchPredictions = model.predict(batchImages)
+        
+        # Append predictions and true labels to lists
+        predictions_list.append(batchPredictions)
+        trueLabelsList.append(batchLabels)
+
+    # Concatenate predictions and true labels from all batches
+    predictions = np.concatenate(predictions_list, axis=0)
+    trueLabels = np.concatenate(trueLabelsList, axis=0)
+
+    # Process predictions and true labels
+    predicted_labels = [round(prediction.argmax()) for prediction in predictions]
+    trueLabels = [label.argmax() for label in trueLabels]
+
+    # Calculate confusion matrix and classification report
+    confMatrix = confusion_matrix(trueLabels, predicted_labels)
+    classReport = classification_report(trueLabels, predicted_labels)
+
+    # Print the results
     print("Confusion Matrix:")
-    print(conf_matrix)
+    print(confMatrix)
     print("Classification Report:")
-    print(class_report)
+    print(classReport)
 
 if __name__ == "__main__":
     main()
